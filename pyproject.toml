@@ -1,0 +1,19 @@
+[project]
+name = "hashlist"
+version = "0.1.0"
+description = "A high-performance hybrid list with O(1) hashing speed for Python."
+readme = "README.md"
+authors = [
+    { name = "Fort66", email = "mamonov.1966@yandex.ru" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[build-system]
+requires = ["scikit-build-core==0.10.7", "pybind11==2.13.6"]
+build-backend = "scikit_build_core.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

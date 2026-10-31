@@ -10,6 +10,7 @@ jobs:
     name: Build wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false # Чтобы падение Windows не отменяло сборку Linux и Mac
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
@@ -23,6 +24,9 @@ jobs:
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
+          # 🔥 ЖЕСТКИЙ ФИКС ДЛЯ WINDOWS: Отключаем изоляцию pip, чтобы он видел системный компилятор и CMake
+          CIBW_BEFORE_BUILD_WINDOWS: "pip install scikit-build-core pybind11"
+          CIBW_BUILD_FRONTEND_WINDOWS: "setuptools"
 
       - uses: actions/upload-artifact@v4
         with:

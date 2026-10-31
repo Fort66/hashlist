@@ -1,6 +1,6 @@
 [project]
 name = "hashlist"
-version = "0.1.6"
+version = "0.1.7"
 description = "A high-performance hybrid list with O(1) hashing speed for Python."
 readme = "README.md"
 authors = [
@@ -10,7 +10,7 @@ requires-python = ">=3.13"
 dependencies = []
 
 [build-system]
-requires = ["scikit-build-core==0.10.7", "pybind11==2.13.6"]
+requires = ["scikit-build-core>=0.10.0", "pybind11>=2.13.0"]
 build-backend = "scikit_build_core.build"
 
 [dependency-groups]

@@ -65,7 +65,6 @@ private:
         }
     }
 
-    // 🚀 СВЕРХОПТИМИЗИРОВАННЫЙ СДВИГ ИНДЕКСОВ С FAST-PATH ДЛЯ O(1) УДАЛЕНИЯ С КОНЦА
     void fix_indices_after_remove(size_t removed_idx, ssize_t removed_token, size_t old_size) {
         auto& vec = hash_map[removed_token];
         auto it = std::find(vec.begin(), vec.end(), removed_idx);
@@ -76,13 +75,10 @@ private:
             hash_map.erase(removed_token);
         }
 
-        // 🔥 FAST-PATH: Если элемент удаляется с самого конца списка,
-        // индексы остальных элементов вообще не меняются! Мгновенный выход за O(1).
         if (removed_idx >= old_size - 1) {
             return;
         }
 
-        // Локальный сдвиг только в случае, если удаление произошло в середине или начале
         for (auto& pair : hash_map) {
             for (auto& idx : pair.second) {
                 if (idx > removed_idx) {
@@ -246,7 +242,7 @@ public:
                 }
             }
             rebuild_hash_map();
-            return;
+            return; // Явный оператор return добавлен для стабильности MSVC на Windows
         }
     }
 

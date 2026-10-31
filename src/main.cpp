@@ -24,7 +24,8 @@ private:
                 pairs.append(py::make_tuple(freeze_internal(k), freeze_internal(v)));
             }
             pairs.attr("sort")();
-            return py::make_tuple("dict_token", py::tuple(pairs));
+            // Явное приведение к py::str для совместимости с MSVC
+            return py::make_tuple(py::str("dict_token"), py::tuple(pairs));
         }
         if (py::isinstance<py::list>(item)) {
             py::list l = py::reinterpret_borrow<py::list>(item);
@@ -32,7 +33,7 @@ private:
             for (auto el : l) {
                 frozen_elements.append(freeze_internal(py::reinterpret_borrow<py::object>(el)));
             }
-            return py::make_tuple("list_token", py::tuple(frozen_elements));
+            return py::make_tuple(py::str("list_token"), py::tuple(frozen_elements));
         }
         if (py::isinstance<py::set>(item)) {
             py::set s = py::reinterpret_borrow<py::set>(item);
@@ -41,7 +42,7 @@ private:
                 frozen_elements.append(freeze_internal(py::reinterpret_borrow<py::object>(el)));
             }
             frozen_elements.attr("sort")();
-            return py::make_tuple("set_token", py::tuple(frozen_elements));
+            return py::make_tuple(py::str("set_token"), py::tuple(frozen_elements));
         }
         return item;
     }
@@ -242,7 +243,7 @@ public:
                 }
             }
             rebuild_hash_map();
-            return; // Явный оператор return добавлен для стабильности MSVC на Windows
+            return;
         }
     }
 

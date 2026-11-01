@@ -1,4 +1,4 @@
-*Read this in other languages: [Русский](README_RU.md).*
+*Read this in other languages: [Русский](#hashlist-1).*
 # hashlist
 
 A high-performance, drop-in replacement for the standard Python `list` with **O(1) search and index speed** powered by a native C++17 backend via `pybind11`.

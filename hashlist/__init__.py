@@ -1,4 +1,14 @@
 # ruff: noqa: I001
+import os
+import sys
+
+if sys.platform == "win32":
+    libs_dir = os.path.join(os.path.dirname(__file__), ".libs")
+    if os.path.isdir(libs_dir):
+        os.add_dll_directory(libs_dir)
+    elif os.path.isdir(r"C:\msys64\ucrt64\bin"):
+        os.add_dll_directory(r"C:\msys64\ucrt64\bin")
+
 from collections.abc import MutableSequence
 from .hashlist_backend import HashListCpp
 
@@ -6,91 +16,98 @@ class hashlist(MutableSequence):
     __slots__ = ('_backend',)
 
     def __init__(self, iterable=None):
-        """Промышленный тип данных с высокопроизводительным ядром на C++"""
-        self._backend = HashListCpp()
-        if iterable is not None:
-            self.extend(iterable)
+        self._backend = HashListCpp(iterable)
 
     def append(self, item):
-        """Добавляет элемент x в конец списка a."""
         self._backend.append(item)
 
     def extend(self, iterable):
-        """Добавляет в конец a все элементы списка b."""
         self._backend.extend(iterable)
 
     def insert(self, index, item):
-        """Вставляет элемент x на позицию i."""
-        self._backend.insert(index, item)
+        items = [self[i] for i in range(len(self))]
+        items.insert(index, item)
+        self._backend.clear()
+        self._backend.extend(items)
 
     def remove(self, item):
-        """Удаляет в a первый элемент, значение которого равно x."""
         self._backend.remove(item)
 
     def clear(self):
-        """Удаляет все элементы из списка a и делает его пустым."""
         self._backend.clear()
 
     def index(self, item, *args):
-        """Возвращает индекс элемента списка."""
         if args:
             items_list = [self[i] for i in range(len(self))]
             return items_list.index(item, *args)
         return self._backend.index_of(item)
-
-    def pop(self, index=-1):
-        """Удаляет элемент по индексу и возвращает его."""
-        return self._backend.pop(index)
+    def pop(self, *args):
+        # Распаковываем кортеж аргументов напрямую в C API парсер
+        return self._backend.pop(*args)
 
     def count(self, item):
-        """Считает, сколько раз элемент повторяется в списке за O(1)."""
         return self._backend.count(item)
 
     def sort(self, *args, **kwargs):
-        """Сортирует список на месте."""
-        self._backend.sort(*args, **kwargs)
+        items = [self[i] for i in range(len(self))]
+        items.sort(*args, **kwargs)
+        self._backend.clear()
+        self._backend.extend(items)
 
     def reverse(self):
-        """Разворачивает список на месте."""
         self._backend.reverse()
 
     def copy(self):
-        """Создаёт поверхностную копию списка."""
-        new_hl = hashlist()
-        for i in range(len(self)):
-            new_hl.append(self[i])
-        return new_hl
+        return hashlist(self)
 
-    # --- Новые методы поддержки глобальных функций sorted() и reversed() ---
     def __reversed__(self):
-        """Обеспечивает корректную работу глобальной функции reversed(hl)"""
-        # Возвращаем генератор, который идет с конца структуры к началу
         for i in range(len(self) - 1, -1, -1):
             yield self[i]
 
-    # --- Поддержка синтаксического контракта Python ---
     def __len__(self):
         return self._backend.__len__()
 
     def __getitem__(self, index):
-        result = self._backend.getitem(index)
-        if isinstance(result, HashListCpp):
-            new_hl = hashlist()
-            new_hl._backend = result
-            return new_hl
-        return result
+        if isinstance(index, slice):
+            items = [self[i] for i in range(len(self))]
+            return hashlist(items[index])
+        if not isinstance(index, int):
+            raise TypeError("hashlist indices must be integers or slices")
+        return self._backend[index]
 
     def __setitem__(self, index, value):
-        self._backend.setitem(index, value)
+        if isinstance(index, slice):
+            items = [self[i] for i in range(len(self))]
+            items[index] = value
+            self._backend.clear()
+            self._backend.extend(items)
+            return
+        if not isinstance(index, int):
+            raise TypeError("hashlist indices must be integers or slices")
+        items = [self[i] for i in range(len(self))]
+        items[index] = value
+        self._backend.clear()
+        self._backend.extend(items)
 
     def __delitem__(self, index):
-        self._backend.delitem(index)
+        if isinstance(index, slice):
+            items = [self[i] for i in range(len(self))]
+            del items[index]
+            self._backend.clear()
+            self._backend.extend(items)
+            return
+        if not isinstance(index, int):
+            raise TypeError("hashlist indices must be integers or slices")
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError("hashlist deletion index out of range")
+        self._backend.pop(index)
 
     def __contains__(self, item):
-        return self._backend.__contains__(item)
+        return self._backend.contains(item)
 
     def __iter__(self):
-        """Поддержка стандартного перебора для sorted()"""
         for i in range(len(self)):
             yield self[i]
 
@@ -108,13 +125,17 @@ class hashlist(MutableSequence):
     def __mul__(self, value):
         if not isinstance(value, int): return NotImplemented
         result = hashlist()
+        if value <= 0: return result
         for _ in range(value):
-            result.extend([self[i] for i in range(len(self))])
+            result.extend(self)
         return result
 
     def __imul__(self, value):
         if not isinstance(value, int): return NotImplemented
-        old_items = [self[i] for i in range(len(self))]
+        if value <= 0:
+            self.clear()
+            return self
+        old_items = list(self)
         for _ in range(value - 1):
             self.extend(old_items)
         return self
@@ -122,15 +143,13 @@ class hashlist(MutableSequence):
     def __eq__(self, other):
         if isinstance(other, hashlist):
             if len(self) != len(other): return False
-            return [self[i] for i in range(len(self))] == [other[i] for i in range(len(other))]
+            return list(self) == list(other)
         if isinstance(other, list):
-            return [self[i] for i in range(len(self))] == other
+            return list(self) == other
         return False
 
     def __repr__(self):
-        items_repr = [self[i] for i in range(len(self))]
-        return f"hashlist({repr(items_repr)})"
+        return f"hashlist({list(self)})"
 
 def hl(*args):
-    """Удобная фабрика для создания hashlist через запятую"""
     return hashlist(args)

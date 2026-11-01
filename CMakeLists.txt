@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
-project(hashlist LANGUAGES CXX)
+project(hashlist LANGUAGES C)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Используем стандартный классический компонент для сборки Си-модулей Python
+find_package(Python COMPONENTS Development.Module REQUIRED)
 
-find_package(pybind11 CONFIG REQUIRED)
+python_add_library(hashlist_backend MODULE src/hashlist_core.c)
+set_target_properties(hashlist_backend PROPERTIES C_VISIBILITY_HIDDEN ON)
 
-pybind11_add_module(hashlist_backend src/main.cpp)
-
+# Явно указываем scikit-build-core, куда положить собранный Си-бинарник
 install(TARGETS hashlist_backend DESTINATION hashlist)

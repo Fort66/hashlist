@@ -10,13 +10,13 @@ requires-python = ">=3.13"
 dependencies = []
 
 [build-system]
+# Сборщик cibuildwheel сам поставит это из безопасного кэша перед компиляцией Си-файла
 requires = ["scikit-build-core>=0.10.0"]
 build-backend = "scikit_build_core.build"
 
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
-    "cibuildwheel>=2.22.0",
 ]
 
 [tool.scikit-build]
@@ -26,11 +26,3 @@ logging.level = "INFO"
 [tool.cibuildwheel]
 # Собираем строго под Python 3.13
 build = "cp313-*"
-
-[tool.cibuildwheel.linux]
-# Указываем использовать стандартный manylinux образ
-manylinux-x86_64-image = "manylinux_2_28"
-before-build = "pip install scikit-build-core"
-
-[tool.cibuildwheel.windows]
-before-build = "pip install scikit-build-core"

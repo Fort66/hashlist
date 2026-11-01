@@ -25,7 +25,8 @@ jobs:
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
           CIBW_BUILD: "cp313-*"
-          CIBW_BEFORE_BUILD: "pip install scikit-build-core"
+          # 🔥 УБРАЛИ КРИТИЧЕСКИЙ CIBW_BEFORE_BUILD! 
+          # Теперь cibuildwheel сам поставит всё из безопасного кэша build-system.
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

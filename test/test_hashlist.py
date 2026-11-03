@@ -167,6 +167,8 @@ def test_sorted_and_reversed_global():
     res_reversed = hashlist(reversed(hl_obj))
     assert list(res_reversed) == [20, 10, 30]
     assert isinstance(res_reversed, hashlist)
+
+
 def test_cpp_deterministic_dict_hashing():
     """Тест 11.2: Детерминированность хэшей словарей с разным порядком ключей на Си-уровне"""
     d1 = {"а": 1, "б": 2, "в": {"х": 9}}
@@ -237,8 +239,6 @@ def test_performance_benchmark_minimum_speedup():
     speedup = t_std / t_cpp
     print(f"\n[Pytest Бенчмарк] Ускорение Си ядра: {speedup:,.1f}x")
     assert speedup > 1.0
-
-
 # =====================================================================
 # НOВЫЕ СВЕРХЖЕСТКИЕ ТЕСТЫ ДЛЯ ИСКЛЮЧЕНИЯ ЛЮБЫХ РЕГРЕССИЙ НА PYPI
 # =====================================================================
@@ -310,16 +310,21 @@ def test_fix_invalid_index_type_errors():
 
 
 def test_boolean_vs_integer_identity():
-    """Тест фикса 6: Проверка, что Си-ядро отличает True от 1, а False от 0 в хэш-таблице"""
+    """Тест фикса 6: Проверка стандартного поведения Python для True/1 и False/0"""
     items = hl(1, True, 0, False)
+
+    # В каноничном Python list(1, True, 0, False).count(1) равен 2, так как 1 == True
+    assert items.count(1) == 2
+    assert items.count(True) == 2
+    assert items.count(0) == 2
+    assert items.count(False) == 2
     
-    assert items.count(1) == 1
-    assert items.count(True) == 1
-    assert items.count(0) == 1
-    assert items.count(False) == 1
-    
-    assert items.index(True) == 1
-    assert items.index(False) == 3
+    # Метод index() должен возвращать первое вхождение (для True/1 это индекс 0)
+    assert items.index(True) == 0
+    assert items.index(1) == 0
+    assert items.index(False) == 2
+    assert items.index(0) == 2
+
 
 
 def test_extreme_numeric_values():
@@ -333,7 +338,6 @@ def test_extreme_numeric_values():
     assert large_int in items
     assert negative_large_int in items
     assert None in items
-    # Для NaN проверяем идентичность объекта (в Си-ядре s_ptr == i_ptr спасет)
     assert nan_float in items
 
 
@@ -357,3 +361,108 @@ def test_cascade_mutations_and_lazy_rebuild():
     assert "new2" in hl_obj
     assert hl_obj.index("new1") == len(hl_obj) - 2
     assert hl_obj.count("new1") == 1
+
+
+# =====================================================================
+# НOВЫЕ АВТОМАТИЧЕСКИЕ ТЕСТЫ ПРОИЗВОДИТЕЛЬНОСТИ ПО СКРИНШОТАМ СТУДЕНТА
+# =====================================================================
+
+def test_student_scale_search_performance():
+    """Тест фикса 9: Проверка O(1) поиска существующих и отсутствующих элементов на 20 000 записей"""
+    size = 20000
+    data = list(range(size))
+    random.shuffle(data)
+    
+    hl_obj = hashlist(data)
+    std_list = list(data)
+    
+    # Выбираем худший случай для списка (элемент в самом конце)
+    target_exist = data[-1]
+    target_missing = size + 500
+    
+    # Замер существующего элемента
+    t0 = time.perf_counter()
+    for _ in range(200): _ = target_exist in hl_obj
+    t_hl_exist = time.perf_counter() - t0
+    
+    t0 = time.perf_counter()
+    for _ in range(200): _ = target_exist in std_list
+    t_std_exist = time.perf_counter() - t0
+    
+    assert t_hl_exist < t_std_exist, f"Регрессия поиска! hashlist ({t_hl_exist:.5f}s) медленнее list ({t_std_exist:.5f}s)"
+
+    # Замер отсутствующего элемента
+    t0 = time.perf_counter()
+    for _ in range(200): _ = target_missing in hl_obj
+    t_hl_miss = time.perf_counter() - t0
+    
+    t0 = time.perf_counter()
+    for _ in range(200): _ = target_missing in std_list
+    t_std_miss = time.perf_counter() - t0
+    
+    assert t_hl_miss < t_std_miss, f"Регрессия отсутствия! hashlist ({t_hl_miss:.5f}s) медленнее list ({t_std_miss:.5f}s)"
+
+
+def test_student_scale_index_performance():
+    """Тест фикса 10: Проверка O(1) разрешения индексов через .index() на малом масштабе"""
+    size = 20000
+    data = list(range(size))
+    random.shuffle(data)
+    
+    hl_obj = hashlist(data)
+    std_list = list(data)
+    target = data[-1]
+    
+    t0 = time.perf_counter()
+    for _ in range(200): _ = hl_obj.index(target)
+    t_hl = time.perf_counter() - t0
+    
+    t0 = time.perf_counter()
+    for _ in range(200): _ = std_list.index(target)
+    t_std = time.perf_counter() - t0
+    
+    assert t_hl < t_std, f"Регрессия метода index! hashlist ({t_hl:.5f}s) медленнее list ({t_std:.5f}s)"
+
+
+def test_student_scale_count_performance():
+    """Тест фикса 11: Проверка константного извлечения количества дубликатов на малом масштабе"""
+    size = 20000
+    data = [7] * size
+    
+    hl_obj = hashlist(data)
+    std_list = list(data)
+    
+    t0 = time.perf_counter()
+    for _ in range(200): _ = hl_obj.count(7)
+    t_hl = time.perf_counter() - t0
+    
+    t0 = time.perf_counter()
+    for _ in range(200): _ = std_list.count(7)
+    t_std = time.perf_counter() - t0
+    
+    assert t_hl < t_std, f"Регрессия метода count! hashlist ({t_hl:.5f}s) медленнее list ({t_std:.5f}s)"
+
+
+def test_strict_boolean_vs_integer_identity_behavior():
+    """Тест системного фикса: проверка эквивалентности True и 1, False и 0 при поиске"""
+    from hashlist import hashlist
+    
+    # Кейс 1: True внутри коллекции, ищем через число 1
+    h_true = hashlist([True])
+    assert h_true == [1]
+    assert 1 in h_true, "Число 1 должно находиться в hashlist([True])"
+    assert h_true.count(1) == 1, "Количество единиц в hashlist([True]) должно быть 1"
+    assert h_true.index(1) == 0, "Индекс числа 1 в hashlist([True]) должен быть 0"
+    
+    h_true.remove(1)
+    assert len(h_true) == 0, "Удаление 1 должно было очистить коллекцию"
+
+    # Кейс 2: False внутри коллекции, ищем через число 0
+    h_false = hashlist([False])
+    assert h_false == [0]
+    assert 0 in h_false, "Число 0 должно находиться в hashlist([False])"
+    assert h_false.count(0) == 1
+    assert h_false.index(0) == 0
+    
+    h_false.remove(0)
+    assert len(h_false) == 0

@@ -6,8 +6,6 @@ if sys.platform == "win32":
     libs_dir = os.path.join(os.path.dirname(__file__), ".libs")
     if os.path.isdir(libs_dir):
         os.add_dll_directory(libs_dir)
-    elif os.path.isdir(r"C:\msys64\ucrt64\bin"):
-        os.add_dll_directory(r"C:\msys64\ucrt64\bin")
 
 from collections.abc import MutableSequence
 from .hashlist_backend import HashListCpp
@@ -15,8 +13,14 @@ from .hashlist_backend import HashListCpp
 class hashlist(MutableSequence):
     __slots__ = ('_backend',)
 
-    def __init__(self, iterable=None):
-        self._backend = HashListCpp(iterable)
+    def __init__(self, iterable=None, /):
+        # Если передали Си-объект напрямую (из срезов/копий) — привязываем его
+        if isinstance(iterable, HashListCpp):
+            self._backend = iterable
+        elif isinstance(iterable, hashlist):
+            self._backend = iterable._backend.copy()
+        else:
+            self._backend = HashListCpp(iterable)
 
     def append(self, item):
         self._backend.append(item)
@@ -25,10 +29,9 @@ class hashlist(MutableSequence):
         self._backend.extend(iterable)
 
     def insert(self, index, item):
-        items = [self[i] for i in range(len(self))]
-        items.insert(index, item)
-        self._backend.clear()
-        self._backend.extend(items)
+        if not isinstance(index, int):
+            raise TypeError("hashlist indices must be integers")
+        self._backend.insert(index, item)
 
     def remove(self, item):
         self._backend.remove(item)
@@ -38,18 +41,18 @@ class hashlist(MutableSequence):
 
     def index(self, item, *args):
         if args:
-            items_list = [self[i] for i in range(len(self))]
-            return items_list.index(item, *args)
+            return list(self).index(item, *args)
         return self._backend.index_of(item)
+
     def pop(self, *args):
-        # Распаковываем кортеж аргументов напрямую в C API парсер
         return self._backend.pop(*args)
 
     def count(self, item):
         return self._backend.count(item)
 
+
     def sort(self, *args, **kwargs):
-        items = [self[i] for i in range(len(self))]
+        items = list(self)
         items.sort(*args, **kwargs)
         self._backend.clear()
         self._backend.extend(items)
@@ -58,7 +61,8 @@ class hashlist(MutableSequence):
         self._backend.reverse()
 
     def copy(self):
-        return hashlist(self)
+        # НАДЁЖНЫЙ ФИКС: Вызываем нативный Си-слепок памяти
+        return hashlist(self._backend.copy())
 
     def __reversed__(self):
         for i in range(len(self) - 1, -1, -1):
@@ -69,47 +73,40 @@ class hashlist(MutableSequence):
 
     def __getitem__(self, index):
         if isinstance(index, slice):
-            items = [self[i] for i in range(len(self))]
-            return hashlist(items[index])
+            # НАДЁЖНЫЙ ФИКС: Вызываем нативный Си-срез
+            return hashlist(self._backend[index])
         if not isinstance(index, int):
             raise TypeError("hashlist indices must be integers or slices")
         return self._backend[index]
 
     def __setitem__(self, index, value):
         if isinstance(index, slice):
-            items = [self[i] for i in range(len(self))]
+            items = list(self)
             items[index] = value
             self._backend.clear()
             self._backend.extend(items)
             return
         if not isinstance(index, int):
             raise TypeError("hashlist indices must be integers or slices")
-        items = [self[i] for i in range(len(self))]
-        items[index] = value
-        self._backend.clear()
-        self._backend.extend(items)
+        self._backend.setitem_c(index, value)
 
     def __delitem__(self, index):
         if isinstance(index, slice):
-            items = [self[i] for i in range(len(self))]
+            items = list(self)
             del items[index]
             self._backend.clear()
             self._backend.extend(items)
             return
         if not isinstance(index, int):
             raise TypeError("hashlist indices must be integers or slices")
-        if index < 0:
-            index += len(self)
-        if index < 0 or index >= len(self):
-            raise IndexError("hashlist deletion index out of range")
-        self._backend.pop(index)
+        self._backend.delitem_c(index)
 
     def __contains__(self, item):
         return self._backend.contains(item)
 
     def __iter__(self):
-        for i in range(len(self)):
-            yield self[i]
+        # НАДЁЖНЫЙ ФИКС: Прямой сквозной проход по Си-итератору ядра
+        return self._backend.__iter__()
 
     def __add__(self, other):
         if not hasattr(other, '__iter__'): return NotImplemented
@@ -126,8 +123,7 @@ class hashlist(MutableSequence):
         if not isinstance(value, int): return NotImplemented
         result = hashlist()
         if value <= 0: return result
-        for _ in range(value):
-            result.extend(self)
+        for _ in range(value): result.extend(self)
         return result
 
     def __imul__(self, value):
@@ -136,16 +132,12 @@ class hashlist(MutableSequence):
             self.clear()
             return self
         old_items = list(self)
-        for _ in range(value - 1):
-            self.extend(old_items)
+        for _ in range(value - 1): self.extend(old_items)
         return self
 
     def __eq__(self, other):
-        if isinstance(other, hashlist):
-            if len(self) != len(other): return False
-            return list(self) == list(other)
-        if isinstance(other, list):
-            return list(self) == other
+        if isinstance(other, hashlist): return list(self) == list(other)
+        if isinstance(other, list): return list(self) == other
         return False
 
     def __repr__(self):

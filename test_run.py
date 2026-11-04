@@ -1,6 +1,9 @@
 import time
 import random
 import sys
+import gc
+import pickle
+import weakref
 
 class StudentItem:
     def __init__(self, value):
@@ -137,6 +140,199 @@ bool_ident_hl.remove(1)
 print(f"   После remove(1) длина списка -> {len(bool_ident_hl)} (Ожидается: 0)")
 
 print()
+
+# ---------------------------------------------------------------------
+# БЛОК 4.6: РЕГРЕССИОННЫЙ КОМПЛЕКС (ПАРИТЕТ LIST, ЛЕНИВЫЕ ТОКЕНЫ,
+#           GC-ЦИКЛЫ, PICKLE, КРАЕВЫЕ ЗНАЧЕНИЯ)
+# ---------------------------------------------------------------------
+print("--- БЛОК 4.6: РЕГРЕССИОННЫЙ КОМПЛЕКС (ПАРИТЕТ LIST, ЛЕНИВЫЕ ТОКЕНЫ, GC, PICKLE) ---")
+
+_complex_total = 0
+_complex_passed = 0
+
+def complex_check(name, ok):
+    """Самопроверка одного сценария и накопление итогового счётчика блока."""
+    global _complex_total, _complex_passed
+    _complex_total += 1
+    _complex_passed += 1 if ok else 0
+    print(f"   ► {name}: {'OK' if ok else 'ПРОВАЛ!'}")
+
+# 1. Мини-фузз: случайные операции зеркально применяются к hashlist и к list.
+#    Потенциально невалидные операции (pop по пустому, отсутствующий элемент
+#    у remove/index, setitem вне диапазона) защищаются зеркалом m: сначала
+#    проверяется легальность операции на list, только затем она выполняется
+#    для обоих контейнеров.
+def _mini_fuzz():
+    ops = ("append", "insert", "pop", "remove", "setitem", "index", "count", "contains")
+    for seed in range(6):
+        rng = random.Random(seed)
+        h, m = hl(), []
+        for step in range(160):
+            op = ops[rng.randrange(len(ops))]
+            val = rng.randrange(-5, 15)
+            if op == "append":
+                h.append(val); m.append(val)
+            elif op == "insert":
+                pos = rng.randrange(len(m) + 1)
+                h.insert(pos, val); m.insert(pos, val)
+            elif op == "pop" and m:
+                pos = rng.randrange(len(m))
+                if h.pop(pos) != m.pop(pos): return False
+            elif op == "remove" and val in m:
+                h.remove(val); m.remove(val)
+            elif op == "setitem" and m:
+                pos = rng.randrange(len(m))
+                h[pos] = val; m[pos] = val
+            elif op == "index" and val in m:
+                if h.index(val) != m.index(val): return False
+            elif op == "count":
+                if h.count(val) != m.count(val): return False
+            elif op == "contains":
+                if (val in h) != (val in m): return False
+        if len(h) != len(m) or not (h == m): return False
+    return True
+
+try:
+    fuzz_ok = _mini_fuzz()
+    print(f"1. Мини-фузз: 6 сидов × 160 зеркальных операций (append/insert/pop/remove/setitem/index/count/in)")
+except Exception as e:
+    fuzz_ok = False
+    print(f"1. Мини-фузз: ИСКЛЮЧЕНИЕ {type(e).__name__}: {e}")
+complex_check("Мини-фузз: паритет со list", fuzz_ok)
+
+# 2. Батарея ленивых токенов: после каждой мутации поиск обязан оставаться
+#    корректным — где-то доливается один слот, где-то позиции сдвигаются и
+#    хэш-таблица перестраивается с нуля.
+try:
+    tok_h, tok_m = hl(10, 20, 30, 40), [10, 20, 30, 40]
+    tok_ok = (30 in tok_h) and tok_h.index(30) == tok_m.index(30) == 2   # eager-токены при создании
+    tok_h.append(50); tok_m.append(50)              # append: ленивая доделка одного слота
+    tok_ok = tok_ok and 50 in tok_h and tok_h.count(50) == tok_m.count(50) == 1
+    tok_h.insert(2, 999); tok_m.insert(2, 999)      # insert в середину: сдвиг позиций
+    tok_ok = tok_ok and tok_h.index(999) == tok_m.index(999) == 2
+    tok_h.pop(0); tok_m.pop(0)                      # pop(0): сдвиг всех позиций
+    tok_ok = tok_ok and tok_h.index(50) == tok_m.index(50) == 4
+    tok_h.pop(); tok_m.pop()                        # pop с хвоста
+    tok_ok = tok_ok and (50 in tok_h) == (50 in tok_m) == False
+    tok_h.remove(999); tok_m.remove(999)            # remove из середины: сдвиг
+    tok_ok = tok_ok and list(tok_h) == tok_m == [20, 30, 40]
+    tok_h[0] = -1; tok_m[0] = -1                    # setitem: перезапись слота
+    tok_ok = tok_ok and tok_h.index(-1) == 0 and (20 in tok_h) == (20 in tok_m) == False
+    tok_h.sort(); tok_m.sort()                      # sort: полная переиндексация
+    tok_ok = tok_ok and list(tok_h) == tok_m == [-1, 30, 40] and tok_h.index(30) == 1
+    tok_h.reverse(); tok_m.reverse()                # reverse: снова сдвиг позиций
+    tok_ok = tok_ok and list(tok_h) == tok_m and tok_h.index(-1) == tok_m.index(-1) == 2
+    tok_h.extend([77, 88]); tok_m.extend([77, 88])  # extend: eager-токены у новых слотов
+    tok_ok = tok_ok and 77 in tok_h and tok_h.index(77) == tok_m.index(77) == 3
+    tok_h.clear(); tok_m.clear()                    # clear: штатное обнуление
+    tok_h.append(1234); tok_m.append(1234)          # «возрождение» после clear
+    tok_ok = tok_ok and list(tok_h) == tok_m == [1234] and 1234 in tok_h
+    print(f"2. Батарея ленивых токенов: 11 мутаций подряд (append/insert/pop/pop(0)/remove/setitem/sort/reverse/extend/clear/append) — паритет со list на каждом шаге")
+except Exception as e:
+    tok_ok = False
+    print(f"2. Батарея ленивых токенов: ИСКЛЮЧЕНИЕ {type(e).__name__}: {e}")
+complex_check("Ленивые токены: батарея мутаций", tok_ok)
+
+# 3. GC-циклы: hashlist с самоссылкой и взаимный цикл из двух hashlist
+#    обязаны умирать только средствами сборщика мусора. Слабые ссылки берём
+#    на маркер-объекты ВНУТРИ контейнеров (как в pytest-наборе): сам hashlist
+#    слабым ссылкам не поддаётся, но при его смерти содержимое умирает вместе
+#    с ним — это и есть маркер сборки цикла.
+try:
+    class _GcMarker:
+        pass
+
+    marker_solo, marker_pair = _GcMarker(), _GcMarker()
+    ref_solo, ref_pair = weakref.ref(marker_solo), weakref.ref(marker_pair)
+
+    solo = hl({"a": 1})
+    solo.append(marker_solo)
+    solo.append(solo)                               # цикл на самого себя
+
+    pair1, pair2 = hl(1), hl(2)
+    pair1.append(marker_pair)
+    pair1.append(pair2); pair2.append(pair1)        # взаимный цикл
+
+    del solo, pair1, pair2, marker_solo, marker_pair
+    gc.collect()
+    gc_ok = ref_solo() is None and ref_pair() is None
+    print(f"3. GC-циклы: самоссылка и взаимный цикл двух hashlist корректно освобождаются сборщиком мусора (маркеры внутри контейнеров)")
+except Exception as e:
+    gc_ok = False
+    print(f"3. GC-циклы: ИСКЛЮЧЕНИЕ {type(e).__name__}: {e}")
+complex_check("GC-циклы: weakref-маркеры", gc_ok)
+
+# 4. Pickle round-trip: плоский и вложенный hashlist сериализуются, а O(1)-поиск
+#    обязан работать сразу после pickle.loads().
+try:
+    pkl_h = hl("текст", [4, 5], {"k": 1}, 4096)
+    pkl_m = list(pkl_h)
+    restored = pickle.loads(pickle.dumps(pkl_h))
+    pkl_ok = (restored == pkl_m) and ({"k": 1} in restored) and (restored.index("текст") == 0) and (restored.index(4096) == 3)
+    nested = hl(hl(1, 2), hl(3, 4))
+    nested_rt = pickle.loads(pickle.dumps(nested))
+    pkl_ok = pkl_ok and len(nested_rt) == 2 and list(nested_rt[0]) == [1, 2] and list(nested_rt[1]) == [3, 4]
+    print(f"4. Pickle round-trip: плоский список (строка/list/dict/int) и вложенные hashlist; O(1)-поиск сразу после pickle.loads()")
+except Exception as e:
+    pkl_ok = False
+    print(f"4. Pickle round-trip: ИСКЛЮЧЕНИЕ {type(e).__name__}: {e}")
+complex_check("Pickle round-trip + O(1)-поиск", pkl_ok)
+
+# 5. Паритет типов исключений: для каждого случая — свежие контейнеры.
+#    Сравниваем только типы исключений, тексты сообщений сознательно не трогаем.
+def _exc_type(fn):
+    try:
+        fn()
+        return "(нет ошибки)"
+    except Exception as e:
+        return type(e).__name__
+
+try:
+    pairs = [
+        ("pop() на пустом",                lambda: hl().pop(),          lambda: [].pop()),
+        ("remove(99) из hl(1, 2)",         lambda: hl(1, 2).remove(99), lambda: [1, 2].remove(99)),
+        ("index(99) в hl(1, 2)",           lambda: hl(1, 2).index(99),  lambda: [1, 2].index(99)),
+        ("extend(5) от hl(1)",             lambda: hl(1).extend(5),     lambda: [1].extend(5)),
+        ("pop(\"0\") по строке-индексу",   lambda: hl(1).pop("0"),      lambda: [1].pop("0")),
+    ]
+    exc_ok = True
+    for name, f_h, f_m in pairs:
+        eh, em = _exc_type(f_h), _exc_type(f_m)
+        parity = eh == em
+        exc_ok = exc_ok and parity
+        print(f"   {name}: hashlist -> {eh}, list -> {em} {'(паритет)' if parity else '(РЕГРЕССИЯ!)'}")
+    print(f"5. Паритет типов исключений: 5 пар (pop/remove/index/extend/тип индекса) на свежих контейнерах")
+except Exception as e:
+    exc_ok = False
+    print(f"5. Паритет типов исключений: ИСКЛЮЧЕНИЕ {type(e).__name__}: {e}")
+complex_check("Паритет типов исключений", exc_ok)
+
+# 6. Краевые значения: NaN (никогда не равен), -0.0 == 0.0, различимость True/1
+#    на уровне бакетов, гигантские ±2^70 (за границей быстрых int-токенов) и
+#    знаменитая коллизия hash(-1) == hash(-2) == -2 в CPython.
+try:
+    edge_m = [0.0, -0.0, float("nan"), 1, True, 2**70, -(2**70), -1, -2]
+    edge_h = hl(*edge_m)
+    edge_ok = (
+        edge_h.index(-0.0) == edge_m.index(-0.0) == 0
+        and edge_h.index(0.0) == edge_m.index(0.0) == 0
+        and (float("nan") in edge_h) is False
+        and edge_h.count(float("nan")) == edge_m.count(float("nan")) == 0
+        and edge_h.count(1) == edge_m.count(1) == 2            # 1 и True считаются вместе (паритет list)
+        and edge_h.index(True) == edge_m.index(True) == 3      # первое равное значение
+        and (2**70 in edge_h) is True
+        and edge_h.index(-(2**70)) == edge_m.index(-(2**70)) == 6
+        and edge_h.index(-1) == edge_m.index(-1) == 7          # hash(-1) == hash(-2)
+        and edge_h.index(-2) == edge_m.index(-2) == 8          # ...но значения различимы
+    )
+    print(f"6. Краевые значения: NaN не находится, -0.0 == 0.0, True/1 различимы по бакетам, ±2^70 через PyObject_Hash, коллизия hash(-1) == hash(-2)")
+except Exception as e:
+    edge_ok = False
+    print(f"6. Краевые значения: ИСКЛЮЧЕНИЕ {type(e).__name__}: {e}")
+complex_check("Краевые значения (NaN, -0.0, True/1, ±2^70, hash(-1)/hash(-2))", edge_ok)
+
+print()
+print(f"👉 ИТОГ РЕГРЕССИОННОГО КОМПЛЕКСА: пройдено {_complex_passed} из {_complex_total}")
 
 # ---------------------------------------------------------------------
 # БЛОК 5: ГЛOБАЛЬНЫЙ СТРЕСС-ТЕСТ НА 5 000 000 РАЗНОРОДНЫХ ЭЛЕМЕНТОВ

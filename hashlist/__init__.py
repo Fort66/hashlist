@@ -8,105 +8,59 @@ if sys.platform == "win32":
         os.add_dll_directory(libs_dir)
 
 from collections.abc import MutableSequence
-from .hashlist_backend import HashListCpp
+from .hashlist_backend import HashListCpp as _HashListCpp
 
-class hashlist(MutableSequence):
-    __slots__ = ('_backend',)
 
-    def __init__(self, iterable=None, /):
-        # Если передали Си-объект напрямую (из срезов/копий) — привязываем его
-        if isinstance(iterable, HashListCpp):
-            self._backend = iterable
-        elif isinstance(iterable, hashlist):
-            self._backend = iterable._backend.copy()
-        else:
-            self._backend = HashListCpp(iterable)
+class hashlist(_HashListCpp, MutableSequence):
+    """Высокопроизводительная замена list с O(1) поиском на нативном C-ядре.
 
-    def append(self, item):
-        self._backend.append(item)
+    Горячие методы (append/extend/insert/remove/pop/clear/count/sort/reverse/
+    copy/len/getitem/setitem(срезы через C?):int/contains/iter) наследуются
+    непосредственно от C-класса HashListCpp: вызов h.append(x) — прямой
+    C-вызов уровня list.append, без Python-кадра.
 
-    def extend(self, iterable):
-        self._backend.extend(iterable)
+    Python-слой добавляет только редкие протокольные добивки (арифметика,
+    сортировка с key/reverse, index со start/stop, срезовые setitem/delitem).
+    """
 
-    def insert(self, index, item):
-        if not isinstance(index, int):
-            raise TypeError("hashlist indices must be integers")
-        self._backend.insert(index, item)
-
-    def remove(self, item):
-        self._backend.remove(item)
-
-    def clear(self):
-        self._backend.clear()
+    __slots__ = ()
 
     def index(self, item, *args):
         if args:
             return list(self).index(item, *args)
-        return self._backend.index_of(item)
-
-    def pop(self, *args):
-        return self._backend.pop(*args)
-
-    def count(self, item):
-        return self._backend.count(item)
-
+        return _HashListCpp.index_of(self, item)
 
     def sort(self, *args, **kwargs):
+        if not args and not kwargs:
+            # Нативный Timsort CPython поверх ленты указателей
+            _HashListCpp.sort(self)
+            return
         items = list(self)
         items.sort(*args, **kwargs)
-        self._backend.clear()
-        self._backend.extend(items)
-
-    def reverse(self):
-        self._backend.reverse()
-
-    def copy(self):
-        # НАДЁЖНЫЙ ФИКС: Вызываем нативный Си-слепок памяти
-        return hashlist(self._backend.copy())
+        self.clear()
+        self.extend(items)
 
     def __reversed__(self):
         for i in range(len(self) - 1, -1, -1):
             yield self[i]
 
-    def __len__(self):
-        return self._backend.__len__()
-
-    def __getitem__(self, index):
-        if isinstance(index, slice):
-            # НАДЁЖНЫЙ ФИКС: Вызываем нативный Си-срез
-            return hashlist(self._backend[index])
-        if not isinstance(index, int):
-            raise TypeError("hashlist indices must be integers or slices")
-        return self._backend[index]
-
     def __setitem__(self, index, value):
         if isinstance(index, slice):
             items = list(self)
             items[index] = value
-            self._backend.clear()
-            self._backend.extend(items)
+            self.clear()
+            self.extend(items)
             return
-        if not isinstance(index, int):
-            raise TypeError("hashlist indices must be integers or slices")
-        self._backend.setitem_c(index, value)
+        self.setitem_c(index, value)
 
     def __delitem__(self, index):
         if isinstance(index, slice):
             items = list(self)
             del items[index]
-            self._backend.clear()
-            self._backend.extend(items)
+            self.clear()
+            self.extend(items)
             return
-        if not isinstance(index, int):
-            raise TypeError("hashlist indices must be integers or slices")
-        self._backend.delitem_c(index)
-
-    def __contains__(self, item):
-        return self._backend.contains(item)
-
-    def __iter__(self):
-        # НАДЁЖНЫЙ ФИКС: Прямой сквозной проход по Си-итератору ядра
-        return self._backend.__iter__()
+        self.delitem_c(index)
 
     def __add__(self, other):
         if not hasattr(other, '__iter__'): return NotImplemented
@@ -136,12 +90,20 @@ class hashlist(MutableSequence):
         return self
 
     def __eq__(self, other):
-        if isinstance(other, hashlist): return list(self) == list(other)
-        if isinstance(other, list): return list(self) == other
+        if isinstance(other, hashlist):
+            return list(self) == list(other)
+        if isinstance(other, list):
+            return list(self) == other
         return False
+
+    def __reduce__(self):
+        # Pickle-поддержка: пересобираем через публичный конструктор.
+        # Самоссылочные контейнеры (h.append(h)) не сериализуются.
+        return (hashlist, (list(self),))
 
     def __repr__(self):
         return f"hashlist({list(self)})"
+
 
 def hl(*args):
     return hashlist(args)
